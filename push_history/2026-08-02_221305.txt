@@ -1,0 +1,4 @@
+docs/ARCHITECTURE.md
+docs/CONFIGURATION.md
+src/batch/config/basesettings/ose_almanac.py
+src/batch/services/ose_almanac/collector/auth.py
