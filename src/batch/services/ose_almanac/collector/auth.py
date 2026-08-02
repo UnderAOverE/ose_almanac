@@ -11,7 +11,7 @@
 # Author        : Shane Reddy.                                                                        #
 #                                                                                                     #
 # Explanation   : Cluster authentication - OAuth challenge flow with per-cluster token caching.       #
-# Dependencies  : httpx via HTTPXClient, CryptoTransformer, cluster_registry model.                   #
+# Dependencies  : httpx via HTTPXClient, tenacity, CryptoTransformer, cluster_registry model.         #
 # Modifications : 2026-08-02 Shane Reddy - initial.                                                   #
 #                                                                                                     #
 # Contact       : shanevreddy@gmail.com.                                                              #
@@ -40,6 +40,14 @@ from urllib.parse import (
     urlparse,
 )
 
+import httpx
+from tenacity import (
+    AsyncRetrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
+
 # Internal imports
 
 from src.batch.config.basesettings.ose_almanac import OSEAlmanacSettings
@@ -65,6 +73,13 @@ DEFAULT_TOKEN_LIFETIME_SECONDS: int = 86400
 class AuthenticationError(Exception):
 
     """Raised when the OAuth server rejects the credentials or returns no token."""
+
+# endClass
+
+
+class RetryableAuthenticationError(AuthenticationError):
+
+    """Transient OAuth server failure (throttling or 5xx) worth retrying with backoff."""
 
 # endClass
 
@@ -188,17 +203,48 @@ class OSEAuthService:
 
         # endIf
 
-        token, expires_in = await self._login(api_url, username, password)
+        # A token is the gate to everything on the cluster, so transient OAuth failures are
+        # retried with exponential backoff; bad credentials (401) are never retried.
+        async for attempt in self._auth_retrying():
+            with attempt:
+                token, expires_in = await self._login(api_url, username, password)
 
-        self._tokens[cluster_name] = _CachedToken(
-            value=token,
-            expires_at=time.time() + max(expires_in - self._settings.token_skew_seconds, 60),
-        )
+                self._tokens[cluster_name] = _CachedToken(
+                    value=token,
+                    expires_at=time.time() + max(expires_in - self._settings.token_skew_seconds, 60),
+                )
 
-        logger.info("openshift_login_ok cluster=%s user=%s", cluster_name, username)
-        return token
+                logger.info("openshift_login_ok cluster=%s user=%s", cluster_name, username)
+                return token
+
+            # endWith
+
+        # endAsyncFor
+
+        raise AuthenticationError(f"Token retries exhausted for cluster {cluster_name}")
 
     # endAsyncDef
+
+    def _auth_retrying(self) -> AsyncRetrying:
+
+        """
+        Builds the retry policy for token acquisition from settings.
+
+        :return: the configured retry controller.
+        :rtype: AsyncRetrying
+        """
+
+        return AsyncRetrying(
+            stop=stop_after_attempt(self._settings.auth_retry_attempts),
+            wait=wait_exponential(
+                min=self._settings.auth_retry_wait_min_seconds,
+                max=self._settings.auth_retry_wait_max_seconds,
+            ),
+            retry=retry_if_exception_type((httpx.TransportError, RetryableAuthenticationError)),
+            reraise=True,
+        )
+
+    # endDef
 
     def invalidate(
             self,
@@ -234,6 +280,13 @@ class OSEAuthService:
         """
 
         response = await self._http_client.call_async("GET", f"{api_url}{OAUTH_METADATA_PATH}")
+
+        if response.status_code >= 500 or response.status_code == 429:
+            raise RetryableAuthenticationError(
+                f"OAuth metadata endpoint unavailable on {api_url} (HTTP {response.status_code})"
+            )
+
+        # endIf
 
         if response.status_code != 200:
             raise AuthenticationError(
@@ -291,6 +344,11 @@ class OSEAuthService:
                 f"OAuth server rejected credentials for {username!r} (401). "
                 "Check the FID, password, and that it is not locked or expired."
             )
+
+        # endIf
+
+        if response.status_code >= 500 or response.status_code == 429:
+            raise RetryableAuthenticationError(f"OAuth server unavailable (HTTP {response.status_code})")
 
         # endIf
 

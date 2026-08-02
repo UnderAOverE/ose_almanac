@@ -116,7 +116,23 @@ class OSEAlmanacSettings(BaseSettings):
         description="Maximum exponential backoff wait between retries.",
     )
 
-    # Auth token handling.
+    # Auth token handling. A token is the gate to everything on a cluster, so transient OAuth
+    # server failures get their own retry budget; bad credentials are never retried.
+    auth_retry_attempts: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum attempts to obtain a bearer token from a cluster's OAuth server.",
+    )
+    auth_retry_wait_min_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        description="First exponential backoff wait between token attempts.",
+    )
+    auth_retry_wait_max_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Maximum exponential backoff wait between token attempts.",
+    )
     token_skew_seconds: int = Field(
         default=300,
         ge=0,

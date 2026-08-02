@@ -31,10 +31,12 @@ The two concurrency limits are a promise to the platform team, not a performance
 An estate-wide sweep is a noticeable amount of API traffic; raise these only after
 agreeing it with the people who run the clusters.
 
-## Retries
+## Retries - cluster API calls
 
-Every cluster API call retries on server errors and throttling, with exponential backoff
-and a hard stop:
+Every call to a cluster API server (namespace listing, ConfigMap pages) automatically
+retries with exponential backoff and a hard stop. What triggers a retry: network errors,
+server errors (5xx), and throttling (429). What never retries: permission errors (401 and
+403) - instead the cached token is dropped so the next attempt logs in fresh.
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -42,10 +44,18 @@ and a hard stop:
 | `OSE_ALMANAC_RETRY_WAIT_MIN_SECONDS` | `2.0` | First backoff wait. |
 | `OSE_ALMANAC_RETRY_WAIT_MAX_SECONDS` | `10.0` | Backoff ceiling. |
 
-## Auth
+## Retries - login tokens
+
+Getting a login token is the gate to everything on a cluster, so transient OAuth server
+failures (throttling, server errors, network blips) are retried with exponential backoff.
+Wrong credentials (401) are never retried - repeating a bad password only risks locking
+the FID.
 
 | Variable | Default | What it does |
 |---|---|---|
+| `OSE_ALMANAC_AUTH_RETRY_ATTEMPTS` | `3` | Maximum attempts to obtain a token per cluster. |
+| `OSE_ALMANAC_AUTH_RETRY_WAIT_MIN_SECONDS` | `2.0` | First backoff wait between token attempts. |
+| `OSE_ALMANAC_AUTH_RETRY_WAIT_MAX_SECONDS` | `30.0` | Backoff ceiling between token attempts. |
 | `OSE_ALMANAC_TOKEN_SKEW_SECONDS` | `300` | Tokens are refreshed this many seconds before they would expire, so a long sweep never runs into an expiring token. |
 
 ## Redaction rules

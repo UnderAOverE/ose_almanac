@@ -36,26 +36,26 @@ Two promises the platform makes and never breaks:
 
 ```
 ose_almanac/
-├── ose_almanac_collector_main.py   entry point - the command the scheduler runs
-├── conf/
-│   └── redaction.yaml              secret-scanner rules (tunable without a code change)
-├── docs/                           you are here
-├── src/
-│   ├── common/                     shared infrastructure layer
-│   │   ├── db/                     MongoDB client + base repository classes
-│   │   ├── httpx/                  HTTP client wrapper (TLS, timeouts, concurrency cap)
-│   │   ├── security/               CryptoTransformer (encrypt/decrypt with a master key)
-│   │   ├── logger.py               shared logger, UTC timestamps
-│   │   └── constants.py
-│   └── batch/
-│       ├── constants.py            database + collection names, version stamps
-│       ├── config/basesettings/    settings models, read from environment variables
-│       ├── models/ose_almanac/     the shape of every stored document
-│       ├── repositories/ose_almanac/  one class per collection - all Mongo access
-│       └── services/ose_almanac/
-│           ├── collector/          auth, cluster client, redaction, hashing, sweep
-│           └── analytics/          parser and extractors (next phase)
-└── tests/
+|-- ose_almanac_collector_main.py   entry point - the command the scheduler runs
+|-- conf/
+|   `-- redaction.yaml              secret-scanner rules (tunable without a code change)
+|-- docs/                           you are here
+|-- src/
+|   |-- common/                     shared infrastructure layer
+|   |   |-- db/                     MongoDB client + base repository classes
+|   |   |-- httpx/                  HTTP client wrapper (TLS, timeouts, concurrency cap)
+|   |   |-- security/               CryptoTransformer (encrypt/decrypt with a master key)
+|   |   |-- logger.py               shared logger, UTC timestamps
+|   |   `-- constants.py
+|   `-- batch/
+|       |-- constants.py            database + collection names, version stamps
+|       |-- config/basesettings/    settings models, read from environment variables
+|       |-- models/ose_almanac/     the shape of every stored document
+|       |-- repositories/ose_almanac/  one class per collection - all Mongo access
+|       `-- services/ose_almanac/
+|           |-- collector/          auth, cluster client, redaction, hashing, sweep
+|           `-- analytics/          parser and extractors (next phase)
+`-- tests/
 ```
 
 ## How the layers talk to each other
