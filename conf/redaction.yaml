@@ -1,0 +1,40 @@
+# =====================================================================================================
+# Secret-scanner rules and placeholder patterns for the collector's write-time redaction.
+# Rules here can be tuned without a code change. Patterns are Python regular expressions.
+#
+# placeholder_patterns: a value (or captured secret) that FULLY matches one of these is an
+# indirection reference, not a stored credential - it is never redacted, because redacting it
+# destroys legitimate analytics signal.
+#
+# rules: high-confidence credential patterns. A rule with a (?P<value>...) group redacts only
+# the captured secret; a rule without one redacts the whole match. The replacement marker
+# carries the rule name, offset and a hash of the original, so analytics can still tell a
+# credential existed and whether it changed.
+# =====================================================================================================
+
+placeholder_patterns:
+  - '^\$\{[^}]+\}$'
+  - '^\{cipher\}.*$'
+  - '^\{[a-z0-9_-]*secret[a-z0-9_-]*\}.*$'
+  - '^\{vault[^}]*\}.*$'
+
+rules:
+  - name: private_key_block
+    pattern: '-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----'
+
+  - name: url_basic_auth
+    pattern: '[a-z][a-z0-9+.-]*://[^/\s:@]+:(?P<value>[^/\s@]{3,})@'
+
+  - name: aws_access_key
+    pattern: '\b(?:AKIA|ASIA)[0-9A-Z]{16}\b'
+
+  - name: jdbc_password
+    pattern: '(?i)jdbc:[^\s"'']*[?&;]password=(?P<value>[^\s&;"'']+)'
+
+  - name: assigned_credential
+    pattern: '(?i)\b(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|keystore[_-]?password|truststore[_-]?password)\b\s*[:=]\s*(?P<value>\S+)'
+
+# Captured values shorter than this are treated as noise, not credentials.
+minimum_secret_length: 4
+
+# end_redaction.yaml
