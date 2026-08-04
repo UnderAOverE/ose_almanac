@@ -1,0 +1,3 @@
+src/batch/models/ose_almanac/configmaps.py
+src/batch/services/ose_almanac/collector/redaction.py
+src/batch/services/ose_almanac/collector/sweep.py
