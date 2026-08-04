@@ -68,7 +68,7 @@ class RedactionRecord(BaseModel):
 
     model_config = PERSISTED_MODEL_CONFIG
 
-    key: str = Field(description="ConfigMap data key the hit was found in.")
+    key: str = Field(description="Data key, or annotation prefixed 'annotation:', the hit was found in.")
     rule: str = Field(description="Name of the scanner rule that matched.")
     line_number: int = Field(ge=1, description="1-based line number of the hit inside the value.")
     offset: int = Field(ge=0, description="Character offset of the hit within its line.")
@@ -107,10 +107,12 @@ class ConfigMapRecordModel(BaseModel):
     key_hashes: dict[str, str] = Field(default_factory=dict, description="SHA-256 per key - which key changed.")
     redactions: list[RedactionRecord] = Field(default_factory=list, description="Redaction hits.")
 
-    # Cluster-side metadata worth keeping. managedFields recovers part of the edit-and-revert
-    # gap a daily sweep cannot see; it is stored verbatim, hence the loosely typed dicts.
+    # Cluster-side metadata worth keeping. Annotations pass through the same write-time
+    # redaction as data values - kubectl's last-applied snapshot embeds a full unredacted
+    # copy of the object. managedFields recovers part of the edit-and-revert gap a daily
+    # sweep cannot see; it is stored verbatim, hence the loosely typed dicts.
     labels: dict[str, str] = Field(default_factory=dict, description="metadata.labels.")
-    annotations: dict[str, str] = Field(default_factory=dict, description="metadata.annotations.")
+    annotations: dict[str, str] = Field(default_factory=dict, description="metadata.annotations, redacted.")
     managed_fields: list[dict[str, Any]] = Field(default_factory=list, description="metadata.managedFields, verbatim.")
     resource_version: str | None = Field(default=None, description="metadata.resourceVersion.")
     creation_timestamp: datetime | None = Field(default=None, description="metadata.creationTimestamp.")

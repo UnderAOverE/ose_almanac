@@ -507,9 +507,9 @@ class OSEAlmanacCollectorService:
     ) -> ConfigMapRecordModel:
 
         """
-        Builds the stored record for one raw ConfigMap: redact every value, then fingerprint
-        the redacted contents. Redaction happens before hashing so stored hashes always match
-        stored values.
+        Builds the stored record for one raw ConfigMap: redact every data and annotation
+        value, then fingerprint the redacted contents. Redaction happens before hashing so
+        stored hashes always match stored values.
 
         :param registry: registry document for placement dimensions.
         :type registry: ClusterRegistryModel
@@ -537,6 +537,14 @@ class OSEAlmanacCollectorService:
 
         # endFor
 
+        # Annotations are redacted too: kubectl's last-applied snapshot embeds a full
+        # unredacted copy of the object, so storing annotations verbatim would leak every
+        # credential the data scan just removed.
+        redacted_annotations, annotation_records = self._redactor.redact_annotations(
+            metadata.get("annotations") or {}
+        )
+        redactions.extend(annotation_records)
+
         content_hash, key_hashes = fingerprint(redacted_data, binary_data)
         now = datetime.now(timezone.utc)
 
@@ -554,7 +562,7 @@ class OSEAlmanacCollectorService:
             key_hashes=key_hashes,
             redactions=redactions,
             labels=metadata.get("labels") or {},
-            annotations=metadata.get("annotations") or {},
+            annotations=redacted_annotations,
             managed_fields=metadata.get("managedFields") or [],
             resource_version=metadata.get("resourceVersion"),
             creation_timestamp=creation_timestamp,
