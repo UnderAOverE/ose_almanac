@@ -33,7 +33,6 @@ sys.dont_write_bytecode = True
 
 from typing import Any
 
-import httpx
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -46,6 +45,11 @@ from tenacity import (
 from src.batch.config.basesettings.ose_almanac import OSEAlmanacSettings
 from src.batch.models.ose_almanac.cluster_registry import ClusterRegistryModel
 from src.batch.services.ose_almanac.collector.auth import OSEAuthService
+from src.batch.services.ose_almanac.collector.http_errors import (
+    is_retryable_status,
+    is_transport_error,
+    status_code_of,
+)
 from src.common.httpx.client import HTTPXClient
 from src.common.logger import logger
 
@@ -147,7 +151,7 @@ class OpenShiftClusterClient:
                 min=self._settings.retry_wait_min_seconds,
                 max=self._settings.retry_wait_max_seconds,
             ),
-            retry=retry_if_exception_type((httpx.TransportError, RetryableApiError)),
+            retry=retry_if_exception_type(RetryableApiError),
             reraise=True,
         )
 
@@ -189,32 +193,35 @@ class OpenShiftClusterClient:
             with attempt:
                 token = await self._auth_service.get_token(cluster_name, api_url, username, password)
 
-                response = await self._http_client.call_async(
-                    "GET",
-                    f"{api_url}{path}",
-                    headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                result = await self._http_client.call_async(
+                    url=f"{api_url}{path}",
+                    headers={"Accept": "application/json"},
+                    bearer_token=token,
                     params=params,
                 )
 
-                if response.status_code == 200:
-                    result: dict[str, Any] = response.json()
-                    return result
+                # The shared client reports failures as strings, never exceptions, so the
+                # status has to be recovered from the text to pick the retry behavior.
+                if isinstance(result, str):
+                    status_code = status_code_of(result)
+
+                    if status_code in (401, 403):
+                        # Force a fresh login on the next call - the cached token may be stale.
+                        self._auth_service.invalidate(cluster_name)
+                        raise ApiError(status_code or 0, f"Not authorized for {path}")
+
+                    # endIf
+
+                    if is_transport_error(result) or is_retryable_status(status_code):
+                        raise RetryableApiError(status_code or 0, result[:300])
+
+                    # endIf
+
+                    raise ApiError(status_code or 0, result[:300])
 
                 # endIf
 
-                if response.status_code in (401, 403):
-                    # Force a fresh login on the next attempt - the cached token may be stale.
-                    self._auth_service.invalidate(cluster_name)
-                    raise ApiError(response.status_code, f"Not authorized for {path}")
-
-                # endIf
-
-                if response.status_code >= 500 or response.status_code == 429:
-                    raise RetryableApiError(response.status_code, response.text[:300])
-
-                # endIf
-
-                raise ApiError(response.status_code, response.text[:300])
+                return result
 
             # endWith
 

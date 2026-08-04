@@ -45,5 +45,8 @@ module_version: str = "1.0.0v"
 HOME_DIRECTORY: str = str(Path.home())
 UTC: timezone = timezone.utc
 
+CONTENT_TYPE: str = "application/json"
+HTTPX_CONCURRENCY_LIMIT: int = 20
+
 
 # end_constants.py

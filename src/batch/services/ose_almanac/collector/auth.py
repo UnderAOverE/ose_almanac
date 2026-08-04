@@ -40,7 +40,6 @@ from urllib.parse import (
     urlparse,
 )
 
-import httpx
 from tenacity import (
     AsyncRetrying,
     retry_if_exception_type,
@@ -53,6 +52,11 @@ from tenacity import (
 from src.batch.config.basesettings.ose_almanac import OSEAlmanacSettings
 from src.batch.constants import MASTER_KEY_ENV_VAR
 from src.batch.models.ose_almanac.cluster_registry import FIDDetails
+from src.batch.services.ose_almanac.collector.http_errors import (
+    is_retryable_status,
+    is_transport_error,
+    status_code_of,
+)
 from src.common.httpx.client import HTTPXClient
 from src.common.logger import logger
 from src.common.security.secure_data_transformer import CryptoTransformer
@@ -240,7 +244,7 @@ class OSEAuthService:
                 min=self._settings.auth_retry_wait_min_seconds,
                 max=self._settings.auth_retry_wait_max_seconds,
             ),
-            retry=retry_if_exception_type((httpx.TransportError, RetryableAuthenticationError)),
+            retry=retry_if_exception_type(RetryableAuthenticationError),
             reraise=True,
         )
 
@@ -279,23 +283,21 @@ class OSEAuthService:
         :raises AuthenticationError: when the metadata cannot be read.
         """
 
-        response = await self._http_client.call_async("GET", f"{api_url}{OAUTH_METADATA_PATH}")
+        result = await self._http_client.call_async(url=f"{api_url}{OAUTH_METADATA_PATH}")
 
-        if response.status_code >= 500 or response.status_code == 429:
-            raise RetryableAuthenticationError(
-                f"OAuth metadata endpoint unavailable on {api_url} (HTTP {response.status_code})"
-            )
+        # The shared client reports failures as strings, never exceptions: transient server
+        # trouble and transport failures are retried, anything else fails hard.
+        if isinstance(result, str):
+            if is_transport_error(result) or is_retryable_status(status_code_of(result)):
+                raise RetryableAuthenticationError(f"OAuth metadata endpoint unavailable on {api_url}: {result}")
 
-        # endIf
+            # endIf
 
-        if response.status_code != 200:
-            raise AuthenticationError(
-                f"Could not read OAuth metadata from {api_url} (HTTP {response.status_code})"
-            )
+            raise AuthenticationError(f"Could not read OAuth metadata from {api_url}: {result}")
 
         # endIf
 
-        endpoint = response.json().get("authorization_endpoint")
+        endpoint = result.get("authorization_endpoint")
 
         if not endpoint:
             raise AuthenticationError(f"No authorization_endpoint in OAuth metadata from {api_url}")
@@ -331,34 +333,40 @@ class OSEAuthService:
         authorize_url = await self._authorization_endpoint(api_url)
         basic = base64.b64encode(f"{username}:{password}".encode()).decode()
 
-        response = await self._http_client.call_async(
-            "GET",
-            authorize_url,
-            params={"client_id": OAUTH_CLIENT_ID, "response_type": "token"},
+        # The token rides the fragment of the 302 redirect, so the call asks the shared
+        # client for that exact status and its response headers instead of a JSON body.
+        result = await self._http_client.call_async(
+            url=authorize_url,
             headers={"Authorization": f"Basic {basic}", "X-CSRF-Token": "1"},
-            follow_redirects=False,
+            params={"client_id": OAUTH_CLIENT_ID, "response_type": "token"},
+            expected_status=302,
+            expected_content_type="",
+            response_headers=True,
         )
 
-        if response.status_code == 401:
-            raise AuthenticationError(
-                f"OAuth server rejected credentials for {username!r} (401). "
-                "Check the FID, password, and that it is not locked or expired."
-            )
+        if isinstance(result, str):
+            status_code = status_code_of(result)
+
+            if status_code == 401:
+                raise AuthenticationError(
+                    f"OAuth server rejected credentials for {username!r} (401). "
+                    "Check the FID, password, and that it is not locked or expired."
+                )
+
+            # endIf
+
+            if is_transport_error(result) or is_retryable_status(status_code):
+                raise RetryableAuthenticationError(f"OAuth server unavailable: {result}")
+
+            # endIf
+
+            raise AuthenticationError(f"Unexpected login response: {result}")
 
         # endIf
 
-        if response.status_code >= 500 or response.status_code == 429:
-            raise RetryableAuthenticationError(f"OAuth server unavailable (HTTP {response.status_code})")
-
-        # endIf
-
-        if response.status_code not in (302, 303):
-            raise AuthenticationError(f"Unexpected login response (HTTP {response.status_code})")
-
-        # endIf
-
-        fragment = parse_qs(urlparse(response.headers.get("location", "")).fragment)
-        token = (fragment.get("access_token") or [None])[0]
+        fragment = parse_qs(urlparse(str(result.get("location", ""))).fragment)
+        access_tokens = fragment.get("access_token") or []
+        token = access_tokens[0] if access_tokens else None
 
         if not token:
             error = (fragment.get("error_description") or fragment.get("error") or ["no token"])[0]

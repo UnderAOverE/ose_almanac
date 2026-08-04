@@ -114,7 +114,6 @@ class OSEAlmanacCollectorService:
             configmaps_repository: ConfigMapsMotorRepository,
             configmaps_historical_repository: ConfigMapsHistoricalMotorRepository,
             sweeps_repository: SweepsMotorRepository,
-            http_client: HTTPXClient,
             auth_service: OSEAuthService,
             cluster_client: OpenShiftClusterClient,
             redactor: Redactor,
@@ -132,8 +131,6 @@ class OSEAlmanacCollectorService:
         :type configmaps_historical_repository: ConfigMapsHistoricalMotorRepository
         :param sweeps_repository: run-outcome store.
         :type sweeps_repository: SweepsMotorRepository
-        :param http_client: shared HTTP client wrapper (lifecycle owned by run_sweep).
-        :type http_client: HTTPXClient
         :param auth_service: cluster authentication service.
         :type auth_service: OSEAuthService
         :param cluster_client: read-only cluster API adapter.
@@ -150,7 +147,6 @@ class OSEAlmanacCollectorService:
         self._configmaps_repository = configmaps_repository
         self._configmaps_historical_repository = configmaps_historical_repository
         self._sweeps_repository = sweeps_repository
-        self._http_client = http_client
         self._auth_service = auth_service
         self._cluster_client = cluster_client
         self._redactor = redactor
@@ -176,11 +172,13 @@ class OSEAlmanacCollectorService:
 
         settings = OSEAlmanacSettings()
 
+        # The shared client has no open/close lifecycle - it opens a fresh connection per
+        # call - so it is wired into the auth and cluster services and never held here.
         http_client = HTTPXClient(
             ca_certificate_path=settings.ca_certificate_path,
             verify_ssl=settings.verify_ssl,
+            timeout=int(settings.request_timeout_seconds),
             concurrency_limit=settings.request_concurrency_limit,
-            timeout_seconds=settings.request_timeout_seconds,
         )
         auth_service = OSEAuthService(http_client=http_client, settings=settings)
         cluster_client = OpenShiftClusterClient(
@@ -194,7 +192,6 @@ class OSEAlmanacCollectorService:
             configmaps_repository=ConfigMapsMotorRepository(mongo_client),
             configmaps_historical_repository=ConfigMapsHistoricalMotorRepository(mongo_client),
             sweeps_repository=SweepsMotorRepository(mongo_client),
-            http_client=http_client,
             auth_service=auth_service,
             cluster_client=cluster_client,
             redactor=Redactor(settings.redaction_rules_path),
@@ -239,21 +236,18 @@ class OSEAlmanacCollectorService:
             clusters_attempted = list(registry.clusters)
             username, password = self._auth_service.resolve_credentials(registry.fid_details)
 
-            async with self._http_client:
-                # The cluster cap is an operational promise to the platform team, not a knob.
-                cluster_semaphore = asyncio.Semaphore(self._settings.cluster_concurrency_limit)
+            # The cluster cap is an operational promise to the platform team, not a knob.
+            cluster_semaphore = asyncio.Semaphore(self._settings.cluster_concurrency_limit)
 
-                cluster_results = await asyncio.gather(
-                    *(
-                        self._sweep_cluster(
-                            registry, cluster_name, username, password, cluster_semaphore, counters
-                        )
-                        for cluster_name in registry.clusters
-                    ),
-                    return_exceptions=True,
-                )
-
-            # endAsyncWith
+            cluster_results = await asyncio.gather(
+                *(
+                    self._sweep_cluster(
+                        registry, cluster_name, username, password, cluster_semaphore, counters
+                    )
+                    for cluster_name in registry.clusters
+                ),
+                return_exceptions=True,
+            )
 
             for cluster_name, result in zip(registry.clusters, cluster_results):
                 if isinstance(result, BaseException):
