@@ -27,6 +27,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The API and dashboards subtrees are self-contained deployables; their dependencies stay
+# out of the core batch install so the nightly collector deploy remains lean.
+api = [
+    "fastapi>=0.111",
+    "uvicorn>=0.30",
+]
+dashboards = [
+    "streamlit>=1.36",
+    "requests>=2.32",
+]
 dev = [
     "pytest>=8.2",
     "pytest-asyncio>=0.23",
