@@ -34,6 +34,12 @@ rules:
   - name: assigned_credential
     pattern: '(?i)\b(?:pass(?:word|wd)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|keystore[_-]?password|truststore[_-]?password)\b\s*[:=]\s*(?P<value>\S+)'
 
+  # Compound names joined by underscore (DB_PASSWORD, MY_API_KEY) evade the word-boundary
+  # rule above because underscore is a word character. Requiring an underscore right before
+  # the keyword keeps the two rules disjoint - no value is ever hit twice.
+  - name: compound_assigned_credential
+    pattern: '(?i)\w*_(?:pass(?:word|wd)?|pwd|secret|token|api_?key|access_?key|client_?secret)\b\s*[:=]\s*(?P<value>\S+)'
+
 # Captured values shorter than this are treated as noise, not credentials.
 minimum_secret_length: 4
 

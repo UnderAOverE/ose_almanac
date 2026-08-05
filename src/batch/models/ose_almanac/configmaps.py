@@ -77,6 +77,23 @@ class RedactionRecord(BaseModel):
 # endClass
 
 
+class ConfigMapIdentityModel(BaseModel):
+
+    """
+    Projection of one current ConfigMap down to its identity - what analytics iterates when
+    it needs every stored ConfigMap without materializing full documents.
+    """
+
+    model_config = PERSISTED_MODEL_CONFIG
+
+    id_: PyObjectId = Field(alias="_id", description="MongoDB document id, the pagination cursor.")
+    cluster_name: str = Field(description="Cluster the ConfigMap was collected from.")
+    namespace: str = Field(description="Namespace the ConfigMap lives in.")
+    name: str = Field(description="ConfigMap name.")
+
+# endClass
+
+
 class ConfigMapRecordModel(BaseModel):
 
     """

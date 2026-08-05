@@ -76,9 +76,11 @@ class DatabasesCollections(StrEnum):
     # Collector output.
     OSE_ALMANAC_CONFIGMAPS_COLLECTION = "configmaps"
     OSE_ALMANAC_CONFIGMAPS_HISTORICAL_COLLECTION = "configmaps_historical"
+    OSE_ALMANAC_WORKLOADS_COLLECTION = "workloads"
     OSE_ALMANAC_SWEEPS_COLLECTION = "sweeps"
 
     # Analytics output.
+    OSE_ALMANAC_CM_BLAST_RADIUS_COLLECTION = "cm_blast_radius"
     OSE_ALMANAC_CM_ENDPOINTS_COLLECTION = "cm_endpoints"
     OSE_ALMANAC_CM_CERTIFICATES_COLLECTION = "cm_certificates"
     OSE_ALMANAC_CM_KEYSTORES_COLLECTION = "cm_keystores"

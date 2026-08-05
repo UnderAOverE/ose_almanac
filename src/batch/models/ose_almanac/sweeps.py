@@ -83,8 +83,13 @@ class NamespaceSweepResult(BaseModel):
 
     cluster_name: str = Field(description="Cluster the namespace belongs to.")
     namespace: str = Field(description="Namespace that was swept.")
-    success: bool = Field(description="Whether the namespace listing completed.")
+    success: bool = Field(description="Whether the namespace ConfigMap listing completed.")
     configmaps_seen: int = Field(default=0, ge=0, description="ConfigMaps observed.")
+    workloads_seen: int = Field(default=0, ge=0, description="Workloads observed.")
+    workload_kinds_failed: list[str] = Field(
+        default_factory=list,
+        description="Workload kinds whose listing failed - orphan verdicts are suppressed while non-empty.",
+    )
     error: str | None = Field(default=None, description="Failure detail when success is false.")
 
 # endClass
@@ -110,6 +115,9 @@ class SweepModel(BaseModel):
     configmaps_new: int = Field(default=0, ge=0, description="New ConfigMap versions inserted.")
     configmaps_changed: int = Field(default=0, ge=0, description="Versions superseded to historical.")
     configmaps_unchanged: int = Field(default=0, ge=0, description="Versions seen unchanged.")
+    # False on records written before workload collection existed, so blast-radius coverage
+    # logic never mistakes an old sweep for one that proved anything about workloads.
+    workloads_collected: bool = Field(default=False, description="Whether this run collected workloads.")
     errors: list[str] = Field(default_factory=list, description="Run-level errors.")
     collector_version: str = Field(default=COLLECTOR_VERSION, description="Collector that ran.")
     schema_version: int = Field(default=SCHEMA_VERSION, description="Shape version of this document.")

@@ -44,6 +44,7 @@ from tenacity import (
 
 from src.batch.config.basesettings.ose_almanac import OSEAlmanacSettings
 from src.batch.models.ose_almanac.cluster_registry import ClusterRegistryModel
+from src.batch.models.ose_almanac.workloads import WorkloadKind
 from src.batch.services.ose_almanac.collector.auth import OSEAuthService
 from src.batch.services.ose_almanac.collector.http_errors import (
     is_retryable_status,
@@ -59,6 +60,11 @@ module_version: str = "1.0.0v"
 
 NAMESPACES_PATH: str = "/api/v1/namespaces"
 CONFIGMAPS_PATH_TEMPLATE: str = "/api/v1/namespaces/{namespace}/configmaps"
+
+WORKLOAD_PATH_TEMPLATES: dict[WorkloadKind, str] = {
+    WorkloadKind.DEPLOYMENT: "/apis/apps/v1/namespaces/{namespace}/deployments",
+    WorkloadKind.STATEFULSET: "/apis/apps/v1/namespaces/{namespace}/statefulsets",
+}
 
 
 # ----------------------------------------------------------------------------------------------------#
@@ -348,6 +354,42 @@ class OpenShiftClusterClient:
         """
 
         path = CONFIGMAPS_PATH_TEMPLATE.format(namespace=namespace)
+        return await self._list_paginated(registry, cluster_name, username, password, path)
+
+    # endAsyncDef
+
+    async def list_workloads(
+            self,
+            registry: ClusterRegistryModel,
+            cluster_name: str,
+            namespace: str,
+            kind: WorkloadKind,
+            username: str,
+            password: str,
+    ) -> list[dict[str, Any]]:
+
+        """
+        Lists every workload of one kind in one namespace, paginated. Callers handle a
+        per-kind failure (usually a missing RBAC verb) without losing the rest of the
+        namespace - one 403 must never look like an empty namespace.
+
+        :param registry: registry document for URL construction.
+        :type registry: ClusterRegistryModel
+        :param cluster_name: cluster to call.
+        :type cluster_name: str
+        :param namespace: namespace to list.
+        :type namespace: str
+        :param kind: workload type to list.
+        :type kind: WorkloadKind
+        :param username: FID username.
+        :type username: str
+        :param password: FID password.
+        :type password: str
+        :return: raw workload objects as returned by the API.
+        :rtype: list[dict[str, Any]]
+        """
+
+        path = WORKLOAD_PATH_TEMPLATES[kind].format(namespace=namespace)
         return await self._list_paginated(registry, cluster_name, username, password, path)
 
     # endAsyncDef

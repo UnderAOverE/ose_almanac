@@ -32,6 +32,11 @@ sys.dont_write_bytecode = True
 # External imports
 
 import asyncio
+import json
+from dataclasses import (
+    dataclass,
+    field,
+)
 from datetime import (
     datetime,
     timezone,
@@ -56,13 +61,21 @@ from src.batch.models.ose_almanac.sweeps import (
     SweepModel,
     SweepOutcome,
 )
+from src.batch.models.ose_almanac.workloads import (
+    WorkloadKind,
+    WorkloadRecordModel,
+)
 from src.batch.repositories.ose_almanac.cluster_registry import ClusterRegistryMotorRepository
 from src.batch.repositories.ose_almanac.configmaps import ConfigMapsMotorRepository
 from src.batch.repositories.ose_almanac.configmaps_historical import ConfigMapsHistoricalMotorRepository
 from src.batch.repositories.ose_almanac.sweeps import SweepsMotorRepository
+from src.batch.repositories.ose_almanac.workloads import WorkloadsMotorRepository
 from src.batch.services.ose_almanac.collector.auth import OSEAuthService
 from src.batch.services.ose_almanac.collector.cluster_client import OpenShiftClusterClient
-from src.batch.services.ose_almanac.collector.hashing import fingerprint
+from src.batch.services.ose_almanac.collector.hashing import (
+    fingerprint,
+    sha256_text,
+)
 from src.batch.services.ose_almanac.collector.redaction import Redactor
 from src.common.httpx.client import HTTPXClient
 from src.common.logger import logger
@@ -98,6 +111,20 @@ class _SweepCounters:
 # endClass
 
 
+# Internal value object - what one namespace sweep observed, before it becomes a persisted
+# NamespaceSweepResult.
+@dataclass
+class _NamespaceHarvest:
+
+    """Counts and per-kind workload failures from sweeping one namespace."""
+
+    configmaps_seen: int = 0
+    workloads_seen: int = 0
+    workload_kinds_failed: list[str] = field(default_factory=list)
+
+# endClass
+
+
 class OSEAlmanacCollectorService:
 
     """
@@ -113,6 +140,7 @@ class OSEAlmanacCollectorService:
             cluster_registry_repository: ClusterRegistryMotorRepository,
             configmaps_repository: ConfigMapsMotorRepository,
             configmaps_historical_repository: ConfigMapsHistoricalMotorRepository,
+            workloads_repository: WorkloadsMotorRepository,
             sweeps_repository: SweepsMotorRepository,
             auth_service: OSEAuthService,
             cluster_client: OpenShiftClusterClient,
@@ -129,6 +157,8 @@ class OSEAlmanacCollectorService:
         :type configmaps_repository: ConfigMapsMotorRepository
         :param configmaps_historical_repository: superseded-version store.
         :type configmaps_historical_repository: ConfigMapsHistoricalMotorRepository
+        :param workloads_repository: current-workload store.
+        :type workloads_repository: WorkloadsMotorRepository
         :param sweeps_repository: run-outcome store.
         :type sweeps_repository: SweepsMotorRepository
         :param auth_service: cluster authentication service.
@@ -146,6 +176,7 @@ class OSEAlmanacCollectorService:
         self._cluster_registry_repository = cluster_registry_repository
         self._configmaps_repository = configmaps_repository
         self._configmaps_historical_repository = configmaps_historical_repository
+        self._workloads_repository = workloads_repository
         self._sweeps_repository = sweeps_repository
         self._auth_service = auth_service
         self._cluster_client = cluster_client
@@ -191,6 +222,7 @@ class OSEAlmanacCollectorService:
             cluster_registry_repository=ClusterRegistryMotorRepository(mongo_client),
             configmaps_repository=ConfigMapsMotorRepository(mongo_client),
             configmaps_historical_repository=ConfigMapsHistoricalMotorRepository(mongo_client),
+            workloads_repository=WorkloadsMotorRepository(mongo_client),
             sweeps_repository=SweepsMotorRepository(mongo_client),
             auth_service=auth_service,
             cluster_client=cluster_client,
@@ -276,6 +308,7 @@ class OSEAlmanacCollectorService:
             configmaps_new=counters.new,
             configmaps_changed=counters.changed,
             configmaps_unchanged=counters.unchanged,
+            workloads_collected=True,
             errors=errors,
         )
 
@@ -366,7 +399,7 @@ class OSEAlmanacCollectorService:
 
             for namespace in namespaces:
                 try:
-                    seen = await self._sweep_namespace(
+                    harvest = await self._sweep_namespace(
                         registry, cluster_name, namespace, username, password, counters
                     )
                     results.append(
@@ -374,7 +407,9 @@ class OSEAlmanacCollectorService:
                             cluster_name=cluster_name,
                             namespace=namespace,
                             success=True,
-                            configmaps_seen=seen,
+                            configmaps_seen=harvest.configmaps_seen,
+                            workloads_seen=harvest.workloads_seen,
+                            workload_kinds_failed=harvest.workload_kinds_failed,
                         )
                     )
 
@@ -412,10 +447,13 @@ class OSEAlmanacCollectorService:
             username: str,
             password: str,
             counters: _SweepCounters,
-    ) -> int:
+    ) -> _NamespaceHarvest:
 
         """
-        Sweeps one namespace: list, redact, fingerprint, dedup write.
+        Sweeps one namespace: list, redact, fingerprint, dedup write - ConfigMaps first, then
+        workloads. A workload kind that fails to list (usually a missing RBAC verb) is recorded
+        on the harvest and must never look like an empty namespace: orphan verdicts downstream
+        are suppressed while any kind is marked failed.
 
         :param registry: registry document for this group.
         :type registry: ClusterRegistryModel
@@ -429,8 +467,8 @@ class OSEAlmanacCollectorService:
         :type password: str
         :param counters: shared run counters.
         :type counters: _SweepCounters
-        :return: the number of ConfigMaps observed.
-        :rtype: int
+        :return: what this namespace sweep observed.
+        :rtype: _NamespaceHarvest
         """
 
         raw_configmaps = await self._cluster_client.list_configmaps(
@@ -442,9 +480,234 @@ class OSEAlmanacCollectorService:
 
         # endFor
 
-        return len(raw_configmaps)
+        harvest = _NamespaceHarvest(configmaps_seen=len(raw_configmaps))
+
+        for kind in WorkloadKind:
+            try:
+                raw_workloads = await self._cluster_client.list_workloads(
+                    registry, cluster_name, namespace, kind, username, password
+                )
+
+                for raw in raw_workloads:
+                    await self._store_workload(registry, cluster_name, namespace, kind, raw)
+
+                # endFor
+
+                harvest.workloads_seen += len(raw_workloads)
+
+            except Exception as generic_exception:
+                harvest.workload_kinds_failed.append(kind.value)
+                logger.error(
+                    "workload_listing_failed cluster=%s namespace=%s kind=%s error=%s",
+                    cluster_name,
+                    namespace,
+                    kind.value,
+                    generic_exception,
+                )
+
+            # endTryExcept
+
+        # endFor
+
+        return harvest
 
     # endAsyncDef
+
+    async def _store_workload(
+            self,
+            registry: ClusterRegistryModel,
+            cluster_name: str,
+            namespace: str,
+            kind: WorkloadKind,
+            raw: dict[str, Any],
+    ) -> None:
+
+        """
+        Stores one workload with hash-based deduplication. Matching hash bumps last_seen; a
+        differing hash replaces the record in place - workloads keep no historical twin.
+
+        :param registry: registry document for placement dimensions.
+        :type registry: ClusterRegistryModel
+        :param cluster_name: cluster the workload came from.
+        :type cluster_name: str
+        :param namespace: namespace the workload lives in.
+        :type namespace: str
+        :param kind: workload type.
+        :type kind: WorkloadKind
+        :param raw: the raw workload object from the API.
+        :type raw: dict[str, Any]
+        :return: None.
+        :rtype: None
+        """
+
+        record = self._build_workload_record(registry, cluster_name, namespace, kind, raw)
+        current = await self._workloads_repository.find_by_identity(
+            cluster_name, namespace, kind, record.name
+        )
+
+        if current is None:
+            await self._workloads_repository.create(record)
+
+        elif current.content_hash == record.content_hash:
+            await self._workloads_repository.mark_seen(
+                cluster_name, namespace, kind, record.name, record.last_seen
+            )
+
+        else:
+            await self._workloads_repository.replace_current(record)
+
+        # endIfElifElse
+
+    # endAsyncDef
+
+    def _build_workload_record(
+            self,
+            registry: ClusterRegistryModel,
+            cluster_name: str,
+            namespace: str,
+            kind: WorkloadKind,
+            raw: dict[str, Any],
+    ) -> WorkloadRecordModel:
+
+        """
+        Builds the stored record for one raw workload: trim the pod template down to the
+        ConfigMap-relevant subtree, redact literal env values, then fingerprint what will be
+        stored so the hash always matches the stored content.
+
+        :param registry: registry document for placement dimensions.
+        :type registry: ClusterRegistryModel
+        :param cluster_name: cluster the workload came from.
+        :type cluster_name: str
+        :param namespace: namespace the workload lives in.
+        :type namespace: str
+        :param kind: workload type.
+        :type kind: WorkloadKind
+        :param raw: the raw workload object from the API.
+        :type raw: dict[str, Any]
+        :return: the record ready to persist.
+        :rtype: WorkloadRecordModel
+        """
+
+        metadata = raw.get("metadata") or {}
+        pod_spec = ((raw.get("spec") or {}).get("template") or {}).get("spec") or {}
+
+        pod_template = self._trim_pod_template(pod_spec)
+        redactions = self._redact_env_values(pod_template)
+
+        content_hash = sha256_text(json.dumps(pod_template, sort_keys=True, default=str))
+        now = datetime.now(timezone.utc)
+
+        return WorkloadRecordModel(
+            cluster_name=cluster_name,
+            namespace=namespace,
+            kind=kind,
+            name=metadata.get("name", ""),
+            content_hash=content_hash,
+            environment=registry.dimensions.environment,
+            sector=registry.dimensions.sector,
+            pod_template=pod_template,
+            redactions=redactions,
+            labels=metadata.get("labels") or {},
+            resource_version=metadata.get("resourceVersion"),
+            creation_timestamp=metadata.get("creationTimestamp"),
+            first_seen=now,
+            last_seen=now,
+        )
+
+    # endDef
+
+    @staticmethod
+    def _trim_pod_template(
+            pod_spec: dict[str, Any],
+    ) -> dict[str, Any]:
+
+        """
+        Trims one pod spec down to the subtree ConfigMap references can live in: volumes,
+        plus each container's name, env, envFrom and volumeMounts. The subtree is stored
+        uninterpreted - no reference extraction happens in the collector, so an extraction
+        fix downstream never costs a re-sweep.
+
+        :param pod_spec: the raw pod template spec.
+        :type pod_spec: dict[str, Any]
+        :return: the trimmed subtree.
+        :rtype: dict[str, Any]
+        """
+
+        def trim_container(container: dict[str, Any]) -> dict[str, Any]:
+
+            """
+            Keeps only the reference-relevant fields of one container.
+
+            :param container: the raw container spec.
+            :type container: dict[str, Any]
+            :return: the trimmed container.
+            :rtype: dict[str, Any]
+            """
+
+            return {key: container[key] for key in ("name", "env", "envFrom", "volumeMounts") if key in container}
+
+        # endDef
+
+        return {
+            "volumes": pod_spec.get("volumes") or [],
+            "containers": [trim_container(container) for container in pod_spec.get("containers") or []],
+            "initContainers": [trim_container(container) for container in pod_spec.get("initContainers") or []],
+        }
+
+    # endDef
+
+    def _redact_env_values(
+            self,
+            pod_template: dict[str, Any],
+    ) -> list[RedactionRecord]:
+
+        """
+        Redacts literal env values in place - pod specs are the other classic home of
+        hardcoded credentials. Each value is scanned as a synthetic "NAME=value" line so
+        rules keyed on assignment shape can see the variable name; the stored value keeps
+        only the redacted right-hand side.
+
+        :param pod_template: the trimmed pod-template subtree, mutated in place.
+        :type pod_template: dict[str, Any]
+        :return: redaction records for every hit.
+        :rtype: list[RedactionRecord]
+        """
+
+        records: list[RedactionRecord] = []
+
+        for section in ("containers", "initContainers"):
+            for container in pod_template.get(section) or []:
+                container_name = container.get("name", "")
+
+                for env_entry in container.get("env") or []:
+                    env_name = env_entry.get("name", "")
+                    env_value = env_entry.get("value")
+
+                    if not isinstance(env_value, str) or not env_value:
+                        continue
+
+                    # endIf
+
+                    synthetic_line = f"{env_name}={env_value}"
+                    redacted, hits = self._redactor.redact_value(
+                        f"env:{container_name}:{env_name}", synthetic_line
+                    )
+
+                    if hits:
+                        env_entry["value"] = redacted[len(env_name) + 1:]
+                        records.extend(hits)
+
+                    # endIf
+
+                # endFor
+
+            # endFor
+
+        # endFor
+
+        return records
+
+    # endDef
 
     async def _store_configmap(
             self,
