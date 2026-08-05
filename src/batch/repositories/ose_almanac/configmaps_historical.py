@@ -79,6 +79,57 @@ class ConfigMapsHistoricalMotorRepository(BaseWriteMotorRepository[ConfigMapReco
 
     # endDef
 
+    async def find_latest_versions(
+            self,
+            environment: str,
+            sector: str,
+    ) -> list[ConfigMapRecordModel]:
+
+        """
+        Returns the most recently superseded version of every ConfigMap in one environment +
+        sector - the predecessor each current version is diffed against. Runs as one
+        aggregation instead of a lookup per ConfigMap, and projects the documents down to
+        identity + hashes so an estate-wide run never materializes full historical values.
+
+        :param environment: environment to read.
+        :type environment: str
+        :param sector: sector to read.
+        :type sector: str
+        :return: one trimmed record per ConfigMap identity with history.
+        :rtype: list[ConfigMapRecordModel]
+        """
+
+        pipeline: list[MongoDocument] = [
+            {"$match": {"environment": environment, "sector": sector}},
+            {"$sort": {"last_seen": -1}},
+            {
+                "$group": {
+                    "_id": {"cluster_name": "$cluster_name", "namespace": "$namespace", "name": "$name"},
+                    "doc": {"$first": "$$ROOT"},
+                }
+            },
+            {"$replaceRoot": {"newRoot": "$doc"}},
+            {
+                "$project": {
+                    "_id": 1,
+                    "cluster_name": 1,
+                    "namespace": 1,
+                    "name": 1,
+                    "content_hash": 1,
+                    "environment": 1,
+                    "sector": 1,
+                    "key_hashes": 1,
+                    "first_seen": 1,
+                    "last_seen": 1,
+                }
+            },
+        ]
+
+        docs = await self._execute_pipeline(pipeline, allow_disk_use=True)
+        return [self._write_map_to_model(doc) for doc in docs]
+
+    # endAsyncDef
+
     async def create(
             self,
             entity: ConfigMapRecordModel,

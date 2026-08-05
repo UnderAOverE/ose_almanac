@@ -33,12 +33,16 @@ sys.dont_write_bytecode = True
 
 from datetime import datetime
 
+import bson
 from motor.motor_asyncio import AsyncIOMotorClient
 
 # Internal imports
 
 from src.batch.constants import DatabasesCollections
-from src.batch.models.ose_almanac.configmaps import ConfigMapRecordModel
+from src.batch.models.ose_almanac.configmaps import (
+    ConfigMapIdentityModel,
+    ConfigMapRecordModel,
+)
 from src.common.db.motor_repository import (
     BaseWriteMotorRepository,
     MongoDocument,
@@ -129,6 +133,85 @@ class ConfigMapsMotorRepository(BaseWriteMotorRepository[ConfigMapRecordModel]):
         # The write base offers no read helper; this stays inside the repository adapter layer.
         doc = await self._collection.find_one(self._identity_filter(cluster_name, namespace, name))
         return self._write_map_to_model(doc) if doc else None
+
+    # endAsyncDef
+
+    async def find_batch(
+            self,
+            environment: str,
+            sector: str,
+            after_id: str | None,
+            limit: int,
+    ) -> list[ConfigMapRecordModel]:
+
+        """
+        Reads one bounded page of current ConfigMaps for an environment + sector, ordered by
+        document id so a caller can walk the whole scope without materializing it at once.
+
+        :param environment: environment to read.
+        :type environment: str
+        :param sector: sector to read.
+        :type sector: str
+        :param after_id: last document id of the previous page, or None for the first page.
+        :type after_id: str | None
+        :param limit: page size.
+        :type limit: int
+        :return: up to limit records.
+        :rtype: list[ConfigMapRecordModel]
+        """
+
+        filter_query: MongoDocument = {"environment": environment, "sector": sector}
+
+        if after_id:
+            filter_query["_id"] = {"$gt": bson.ObjectId(after_id)}
+
+        # endIf
+
+        # The write base offers no read helper; this stays inside the repository adapter layer.
+        cursor = self._collection.find(filter_query).sort("_id", 1).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [self._write_map_to_model(doc) for doc in docs]
+
+    # endAsyncDef
+
+    async def find_identities_batch(
+            self,
+            environment: str,
+            sector: str,
+            after_id: str | None,
+            limit: int,
+    ) -> list[ConfigMapIdentityModel]:
+
+        """
+        Reads one bounded page of ConfigMap identities (id, cluster, namespace, name only) -
+        the projection keeps blast-radius runs from materializing full documents just to know
+        which ConfigMaps exist.
+
+        :param environment: environment to read.
+        :type environment: str
+        :param sector: sector to read.
+        :type sector: str
+        :param after_id: last document id of the previous page, or None for the first page.
+        :type after_id: str | None
+        :param limit: page size.
+        :type limit: int
+        :return: up to limit identity projections.
+        :rtype: list[ConfigMapIdentityModel]
+        """
+
+        filter_query: MongoDocument = {"environment": environment, "sector": sector}
+
+        if after_id:
+            filter_query["_id"] = {"$gt": bson.ObjectId(after_id)}
+
+        # endIf
+
+        projection = {"_id": 1, "cluster_name": 1, "namespace": 1, "name": 1}
+
+        # The write base offers no read helper; this stays inside the repository adapter layer.
+        cursor = self._collection.find(filter_query, projection).sort("_id", 1).limit(limit)
+        docs = await cursor.to_list(length=limit)
+        return [ConfigMapIdentityModel(**doc) for doc in docs]
 
     # endAsyncDef
 
