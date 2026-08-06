@@ -88,7 +88,8 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 
     finally:
-        mongo_client.close()
+        # PyMongo's native async client closes asynchronously, unlike motor's sync close.
+        await mongo_client.close()
 
     # endTryFinally
 

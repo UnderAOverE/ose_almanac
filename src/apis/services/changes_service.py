@@ -11,7 +11,7 @@
 # Author        : Shane Reddy.                                                                        #
 #                                                                                                     #
 # Explanation   : Query service for the change-event feed - the what-changed-when question.           #
-# Dependencies  : motor, src.apis.db, src.apis.settings.                                              #
+# Dependencies  : pymongo, src.apis.db, src.apis.settings.                                            #
 # Modifications : 2026-08-05 Shane Reddy - initial.                                                   #
 #                                                                                                     #
 # Contact       : shanevreddy@gmail.com.                                                              #
@@ -34,7 +34,7 @@ sys.dont_write_bytecode = True
 from datetime import datetime
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.asynchronous.database import AsyncDatabase
 
 # Internal imports
 
@@ -64,7 +64,7 @@ class ChangesQueryService:
 
     def __init__(
             self,
-            database: AsyncIOMotorDatabase,
+            database: AsyncDatabase,
             settings: ApiSettings,
     ) -> None:
 
@@ -72,7 +72,7 @@ class ChangesQueryService:
         ChangesQueryService constructor.
 
         :param database: corpus database handle.
-        :type database: AsyncIOMotorDatabase
+        :type database: AsyncDatabase
         :param settings: API settings for pagination guard rails.
         :type settings: ApiSettings
         :return: None.

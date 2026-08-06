@@ -11,7 +11,7 @@
 # Author        : Shane Reddy.                                                                        #
 #                                                                                                     #
 # Explanation   : Query service for sweep records - the data-freshness and trust signal.              #
-# Dependencies  : motor, src.apis.db.                                                                 #
+# Dependencies  : pymongo, src.apis.db.                                                               #
 # Modifications : 2026-08-05 Shane Reddy - initial.                                                   #
 #                                                                                                     #
 # Contact       : shanevreddy@gmail.com.                                                              #
@@ -33,7 +33,7 @@ sys.dont_write_bytecode = True
 
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.asynchronous.database import AsyncDatabase
 
 # Internal imports
 
@@ -61,14 +61,14 @@ class SweepsQueryService:
 
     def __init__(
             self,
-            database: AsyncIOMotorDatabase,
+            database: AsyncDatabase,
     ) -> None:
 
         """
         SweepsQueryService constructor.
 
         :param database: corpus database handle.
-        :type database: AsyncIOMotorDatabase
+        :type database: AsyncDatabase
         :return: None.
         :rtype: None
         """

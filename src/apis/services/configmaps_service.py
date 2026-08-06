@@ -11,7 +11,7 @@
 # Author        : Shane Reddy.                                                                        #
 #                                                                                                     #
 # Explanation   : Query service for ConfigMap search, detail, version history and blast radius.       #
-# Dependencies  : motor, src.apis.db, src.apis.settings.                                              #
+# Dependencies  : pymongo, src.apis.db, src.apis.settings.                                            #
 # Modifications : 2026-08-05 Shane Reddy - initial.                                                   #
 #                                                                                                     #
 # Contact       : shanevreddy@gmail.com.                                                              #
@@ -34,7 +34,7 @@ sys.dont_write_bytecode = True
 import re
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.asynchronous.database import AsyncDatabase
 
 # Internal imports
 
@@ -68,7 +68,7 @@ class ConfigMapsQueryService:
 
     def __init__(
             self,
-            database: AsyncIOMotorDatabase,
+            database: AsyncDatabase,
             settings: ApiSettings,
     ) -> None:
 
@@ -76,7 +76,7 @@ class ConfigMapsQueryService:
         ConfigMapsQueryService constructor.
 
         :param database: corpus database handle.
-        :type database: AsyncIOMotorDatabase
+        :type database: AsyncDatabase
         :param settings: API settings for pagination guard rails.
         :type settings: ApiSettings
         :return: None.

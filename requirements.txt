@@ -1,0 +1,32 @@
+# =====================================================================================================
+# ose_almanac - OpenShift ConfigMap Intelligence Platform
+# Flat requirements mirror for the enterprise deploy flow. pyproject.toml is the source of
+# truth; keep the two in sync. Every package below is already present in the enterprise
+# batch project's dependency set, so lifting ose_almanac installs nothing new there.
+#
+# motor is EOL upstream (PyMongo's native async API replaces it). It stays here because the
+# enterprise common layer's base repositories are still motor-based and src/common must
+# mirror the layer that replaces it. The self-contained apis subtree uses pymongo directly.
+# =====================================================================================================
+
+# Core batch (collector + analytics)
+cryptography>=43.0
+httpx[http2]>=0.27
+motor>=3.6
+numpy>=2.0
+polars>=1.0
+pydantic>=2.7
+pydantic-settings>=2.3
+pymongo>=4.13
+PyYAML>=6.0
+tenacity>=8.3
+
+# Read-only API (self-contained src/apis; uncomment where the API deploys)
+# fastapi>=0.111
+# uvicorn>=0.30
+
+# Dashboards (self-contained src/dashboards; uncomment where the dashboards deploy)
+# requests>=2.32
+# streamlit>=1.36
+
+# end_requirements.txt

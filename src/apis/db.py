@@ -11,7 +11,7 @@
 # Author        : Shane Reddy.                                                                        #
 #                                                                                                     #
 # Explanation   : The API process's own Mongo edge - client factory and collection names.             #
-# Dependencies  : motor, src.apis.settings.                                                           #
+# Dependencies  : pymongo, src.apis.settings.                                                         #
 # Modifications : 2026-08-05 Shane Reddy - initial.                                                   #
 #                                                                                                     #
 # Contact       : shanevreddy@gmail.com.                                                              #
@@ -31,10 +31,10 @@ sys.dont_write_bytecode = True
 
 # External imports
 
-from motor.motor_asyncio import (
-    AsyncIOMotorClient,
-    AsyncIOMotorDatabase,
-)
+# PyMongo's native async client replaces EOL motor for this subtree; the batch tree keeps
+# motor only because the enterprise common layer it mirrors is still motor-based.
+from pymongo import AsyncMongoClient
+from pymongo.asynchronous.database import AsyncDatabase
 
 # Internal imports
 
@@ -60,37 +60,37 @@ CM_CHANGES_COLLECTION: str = "cm_changes"
 
 def build_mongo_client(
         settings: ApiSettings,
-) -> AsyncIOMotorClient:
+) -> AsyncMongoClient:
 
     """
     Builds the API process's Mongo client - one per process, opened in the app lifespan and
-    closed on shutdown.
+    closed (awaited) on shutdown.
 
     :param settings: API settings carrying the connection string.
     :type settings: ApiSettings
     :return: the async Mongo client.
-    :rtype: AsyncIOMotorClient
+    :rtype: AsyncMongoClient
     """
 
-    return AsyncIOMotorClient(settings.mongo_uri)
+    return AsyncMongoClient(settings.mongo_uri)
 
 # endDef
 
 
 def get_database(
-        client: AsyncIOMotorClient,
+        client: AsyncMongoClient,
         settings: ApiSettings,
-) -> AsyncIOMotorDatabase:
+) -> AsyncDatabase:
 
     """
     Returns the configured corpus database handle.
 
     :param client: the process Mongo client.
-    :type client: AsyncIOMotorClient
+    :type client: AsyncMongoClient
     :param settings: API settings carrying the database name.
     :type settings: ApiSettings
     :return: the database handle.
-    :rtype: AsyncIOMotorDatabase
+    :rtype: AsyncDatabase
     """
 
     return client[settings.mongo_database]
