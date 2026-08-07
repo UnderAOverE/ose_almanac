@@ -175,6 +175,16 @@ async def change_feed(
         cluster: Annotated[str | None, Query(description="Exact cluster name filter.")] = None,
         namespace: Annotated[str | None, Query(description="Exact namespace filter.")] = None,
         configmap: Annotated[str | None, Query(description="Exact ConfigMap name filter.")] = None,
+        exclude_name_prefix: Annotated[
+            str | None,
+            Query(
+                description=(
+                    "Hide events whose ConfigMap name starts with this prefix - e.g. release- "
+                    "to suppress deployment-tooling churn. Ignored when configmap is set. "
+                    "Events stay stored in full; this narrows only the served view."
+                ),
+            ),
+        ] = None,
         change_type: Annotated[ChangeTypeParam | None, Query(description="created or modified.")] = None,
         credential_only: Annotated[bool, Query(description="Only events where a credential-bearing key changed.")] = False,
         since: Annotated[datetime | None, Query(description="Earliest observed_at, inclusive (ISO 8601).")] = None,
@@ -197,6 +207,8 @@ async def change_feed(
     :type namespace: str | None
     :param configmap: exact ConfigMap name filter.
     :type configmap: str | None
+    :param exclude_name_prefix: hide events whose ConfigMap name starts with this prefix.
+    :type exclude_name_prefix: str | None
     :param change_type: created or modified.
     :type change_type: ChangeTypeParam | None
     :param credential_only: only credential-affecting events.
@@ -223,6 +235,7 @@ async def change_feed(
         cluster_name=cluster,
         namespace=namespace,
         configmap_name=configmap,
+        exclude_name_prefix=exclude_name_prefix,
         change_type=change_type.value if change_type else None,
         credential_only=credential_only,
         since=since,

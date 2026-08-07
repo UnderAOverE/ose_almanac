@@ -61,6 +61,10 @@ from src.dashboards.widgets import (
 
 module_version: str = "1.0.0v"
 
+# Deployment tooling stores its release history in ConfigMaps with this name prefix; they
+# churn on every deploy and drown out human edits, so the feed hides them by default.
+TOOLING_NAME_PREFIX: str = "release-"
+
 
 # ----------------------------------------------------------------------------------------------------#
 # Page setup and filters.                                                                             #
@@ -85,6 +89,15 @@ with st.sidebar:
     st.header("Event filters")
     filter_change_type = st.selectbox("Change type", ["any", "created", "modified"])
     filter_credential_only = st.checkbox("Credential changes only")
+    filter_hide_tooling = st.checkbox(
+        f"Hide deployment tooling ({TOOLING_NAME_PREFIX}*)",
+        value=True,
+        help=(
+            "Deployment tooling rewrites its release-history ConfigMaps on every deploy. "
+            "Those events stay recorded; this only hides them from the feed. The exact "
+            "ConfigMap name filter above overrides this."
+        ),
+    )
     filter_since = st.date_input("Since", value=None)
     filter_until = st.date_input("Until", value=None)
 
@@ -107,6 +120,7 @@ status, payload = api_get(
         cluster=filter_cluster,
         namespace=filter_namespace,
         configmap=filter_configmap,
+        exclude_name_prefix=TOOLING_NAME_PREFIX if filter_hide_tooling else "",
         change_type=filter_change_type if filter_change_type != "any" else "",
         credential_only=filter_credential_only,
         since=f"{filter_since}T00:00:00Z" if filter_since else "",

@@ -31,6 +31,8 @@ sys.dont_write_bytecode = True
 
 # External imports
 
+import re
+
 from datetime import datetime
 from typing import Any
 
@@ -114,6 +116,7 @@ class ChangesQueryService:
             cluster_name: str | None,
             namespace: str | None,
             configmap_name: str | None,
+            exclude_name_prefix: str | None,
             change_type: str | None,
             credential_only: bool,
             since: datetime | None,
@@ -126,6 +129,10 @@ class ChangesQueryService:
         Returns one page of change events, newest first. All filters AND together; the time
         window bounds observed_at, which is when the sweep first saw the new version.
 
+        The exclusion prefix narrows only the served view - every event stays stored in
+        full. An exact configmap_name filter overrides it, so asking for one ConfigMap by
+        name always answers even when its name matches the excluded prefix.
+
         :param environment: exact environment filter.
         :type environment: str | None
         :param sector: exact sector filter.
@@ -136,6 +143,8 @@ class ChangesQueryService:
         :type namespace: str | None
         :param configmap_name: exact ConfigMap name filter.
         :type configmap_name: str | None
+        :param exclude_name_prefix: hide events whose ConfigMap name starts with this prefix.
+        :type exclude_name_prefix: str | None
         :param change_type: created or modified.
         :type change_type: str | None
         :param credential_only: when True, only events where a credential-bearing key changed.
@@ -177,7 +186,13 @@ class ChangesQueryService:
         if configmap_name:
             filter_query["configmap_name"] = configmap_name
 
-        # endIf
+        elif exclude_name_prefix:
+            # Machine-written ConfigMaps (deployment-tooling release history) churn on every
+            # deploy and drown out human edits; hiding them here narrows only the served
+            # view, never what is stored. The prefix is escaped so it matches literally.
+            filter_query["configmap_name"] = {"$not": {"$regex": f"^{re.escape(exclude_name_prefix)}"}}
+
+        # endIfElif
 
         if change_type:
             filter_query["change_type"] = change_type
